@@ -87,6 +87,7 @@ with st.sidebar:
         "🏠 Home": "Home",
         "✏️ Journal": "Journal",
         "📖 History": "History",
+        "📊 Insights": "Insights",
         "⚙️ Settings": "Settings"
     }
 
@@ -117,4 +118,7 @@ elif page == "History":
     show()
 elif page == "Settings":
     from views.settings import show
+    show()
+elif page == "Insights":
+    from views.insights import show
     show()
