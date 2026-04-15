@@ -1,9 +1,9 @@
 import streamlit as st
 import plotly.graph_objects as go
-import plotly.express as px
 from datetime import datetime, timedelta
 from collections import Counter
 import re
+import time
 
 try:
     from wordcloud import WordCloud
@@ -48,8 +48,11 @@ MOOD_SCORE = {
 CLOUDNOTE_PURPLE = "#A78BFA"
 CLOUDNOTE_SOFT   = "#EEE9FF"
 
+# Minimum entries needed to render charts meaningfully
+MIN_ENTRIES_FOR_CHARTS = 1
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 def _filter_entries(entries, range_key, custom_start=None, custom_end=None):
     today = datetime.now().date()
@@ -74,7 +77,6 @@ def _filter_entries(entries, range_key, custom_start=None, custom_end=None):
 
 
 def _plotly_theme():
-    """Shared layout kwargs to keep charts on-brand."""
     return dict(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -83,7 +85,7 @@ def _plotly_theme():
     )
 
 
-# ── main view ────────────────────────────────────────────────────────────────
+# ── main view ─────────────────────────────────────────────────────────────────
 
 def show():
     st.markdown(
@@ -96,6 +98,7 @@ def show():
 
     entries = st.session_state.entries
 
+    # Validation 1: no entries at all — nothing to visualize
     if not entries:
         st.markdown(
             """
@@ -108,9 +111,9 @@ def show():
             """,
             unsafe_allow_html=True,
         )
-        return
+        st.stop()  # nothing to render below; halt cleanly
 
-    # ── Inline time range filter ──────────────────────────────────────────────
+    # ── Time range filter ─────────────────────────────────────────────────────
     st.markdown(
         "<p style='font-size:0.8rem; color:#8A7CA8; text-transform:uppercase;"
         " letter-spacing:0.5px; margin-bottom:0.2rem;'>time range</p>",
@@ -125,9 +128,10 @@ def show():
         index=1,
         horizontal=True,
         label_visibility="collapsed",
-        key="insights_range",
+        key="insights_range",  # key preserves selection when other widgets change
     )
 
+    # Validation 2: custom date range — surface error before any chart renders
     custom_start = custom_end = None
     if range_key == "Custom":
         cc1, cc2 = st.columns(2)
@@ -135,26 +139,50 @@ def show():
             custom_start = st.date_input(
                 "from",
                 value=datetime.now().date() - timedelta(days=30),
-                key="insights_start",
+                key="insights_start",  # key lets reset callbacks target this widget
             )
         with cc2:
             custom_end = st.date_input(
                 "to",
                 value=datetime.now().date(),
-                key="insights_end",
+                key="insights_end",    # key pairs with insights_start for range validation
             )
+
+        # Invalid range: end is before start — show error and stop rendering charts
+        if custom_start > custom_end:
+            st.error(
+                f"your start date ({custom_start.strftime('%b %d, %Y')}) is after "
+                f"your end date ({custom_end.strftime('%b %d, %Y')}). "
+                "please adjust the range. 🌥️"
+            )
+            st.stop()  # fatal: charts would be empty or misleading, halt here
+
+        # Edge case: same day selected for both — valid but warn
+        if custom_start == custom_end:
+            st.info(f"showing entries for {custom_start.strftime('%B %d, %Y')} only.")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── Filter and validate results ───────────────────────────────────────────
     filtered = _filter_entries(entries, range_key, custom_start, custom_end)
 
+    # Validation 3: filter returns nothing — tell the user why, don't crash
     if not filtered:
-        st.info("no entries found for this time range. try a wider window. 🌿")
-        return
+        st.warning(
+            "no entries found for this time range. "
+            "try selecting a wider window or 'All time'. 🌿"
+        )
+        st.stop()  # fatal: all charts below require at least 1 entry
+
+    # Feedback Pattern 3: st.success — confirms how many entries are loaded
+    st.success(
+        f"✦ showing {len(filtered)} {'entry' if len(filtered) == 1 else 'entries'} "
+        f"for {range_key.lower()}"
+    )
 
     # ── Summary metrics ───────────────────────────────────────────────────────
-    total_words = sum(len(e["body"].split()) for e in filtered)
-    avg_words   = round(total_words / len(filtered))
+    total_words      = sum(len(e["body"].split()) for e in filtered)
+    avg_words        = round(total_words / len(filtered))
     most_common_mood = Counter(e["mood"] for e in filtered).most_common(1)[0][0]
 
     m1, m2, m3 = st.columns(3)
@@ -174,7 +202,7 @@ def show():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # CHART 1 — Mood frequency (bar chart)
+    # CHART 1 — Mood frequency bar chart
     # ═══════════════════════════════════════════════════════════════════════════
     st.markdown(
         "<p style='font-size:0.85rem; color:#8A7CA8; text-transform:uppercase;"
@@ -182,10 +210,17 @@ def show():
         unsafe_allow_html=True,
     )
 
-    mood_counts = Counter(e["mood"] for e in filtered)
-    moods_present = [m for m in MOOD_ORDER if mood_counts.get(m, 0) > 0]
-    counts = [mood_counts[m] for m in moods_present]
-    bar_colors = [MOOD_COLORS[m] for m in moods_present]
+    mood_counts    = Counter(e["mood"] for e in filtered)
+    moods_present  = [m for m in MOOD_ORDER if mood_counts.get(m, 0) > 0]
+    counts         = [mood_counts[m] for m in moods_present]
+    bar_colors     = [MOOD_COLORS[m] for m in moods_present]
+
+    # Validation 4: only one mood logged — chart still renders but add context
+    if len(moods_present) == 1:
+        st.info(
+            f"all your entries in this range share the same mood: {moods_present[0]}. "
+            "journal across more days to see variety here."
+        )
 
     fig_mood = go.Figure(
         go.Bar(
@@ -206,13 +241,13 @@ def show():
         showlegend=False,
         height=320,
     )
-    st.plotly_chart(fig_mood, use_container_width=True)
+    st.plotly_chart(fig_mood, use_container_width=True, key="chart_mood_bar")
 
     st.markdown("<hr style='border:1px solid #E9D5FF; margin: 1.5rem 0;'>",
                 unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # CHART 2 — Word count by day (line chart)
+    # CHART 2 — Words written per day (line chart)
     # ═══════════════════════════════════════════════════════════════════════════
     st.markdown(
         "<p style='font-size:0.85rem; color:#8A7CA8; text-transform:uppercase;"
@@ -220,14 +255,14 @@ def show():
         unsafe_allow_html=True,
     )
 
-    daily_words: dict = {}
+    daily_words:      dict = {}
     daily_mood_score: dict = {}
     daily_mood_count: dict = {}
 
     for e in filtered:
-        d = e["date"]
+        d  = e["date"]
         wc = len(e["body"].split())
-        daily_words[d] = daily_words.get(d, 0) + wc
+        daily_words[d]      = daily_words.get(d, 0) + wc
         daily_mood_score[d] = daily_mood_score.get(d, 0) + MOOD_SCORE[e["mood"]]
         daily_mood_count[d] = daily_mood_count.get(d, 0) + 1
 
@@ -238,7 +273,16 @@ def show():
     date_labels  = [datetime.strptime(d, "%Y-%m-%d").strftime("%b %d")
                     for d in sorted_dates]
 
-    overlay = st.toggle("overlay mood score", value=False)
+    # Only show the overlay toggle when there's enough data for it to be useful
+    overlay = False
+    if len(sorted_dates) > 1:
+        overlay = st.toggle(
+            "overlay mood score",
+            value=False,
+            key="insights_overlay",  # key prevents toggle state resetting on rerun
+        )
+    else:
+        st.caption("journal on more days to unlock the mood overlay.")
 
     fig_line = go.Figure()
     fig_line.add_trace(go.Scatter(
@@ -283,13 +327,13 @@ def show():
                     xanchor="left", x=0, font=dict(size=12)),
         height=320,
     )
-    st.plotly_chart(fig_line, use_container_width=True)
+    st.plotly_chart(fig_line, use_container_width=True, key="chart_words_line")
 
     st.markdown("<hr style='border:1px solid #E9D5FF; margin: 1.5rem 0;'>",
                 unsafe_allow_html=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # CHART 3 — Mood over time (line chart, numeric scale)
+    # CHART 3 — Mood over time (line chart)
     # ═══════════════════════════════════════════════════════════════════════════
     st.markdown(
         "<p style='font-size:0.85rem; color:#8A7CA8; text-transform:uppercase;"
@@ -297,35 +341,39 @@ def show():
         unsafe_allow_html=True,
     )
 
-    mood_label_map = {5: "great", 4: "good", 3: "okay", 2: "low", 1: "rough"}
-
-    fig_mood_line = go.Figure()
-    fig_mood_line.add_trace(go.Scatter(
-        x=date_labels,
-        y=mood_vals,
-        mode="lines+markers",
-        line=dict(color="#90BE6D", width=2.5),
-        marker=dict(size=7, color="#90BE6D"),
-        fill="tozeroy",
-        fillcolor="rgba(144,190,109,0.10)",
-        hovertemplate="%{x}<br>mood: %{y:.1f}<extra></extra>",
-    ))
-    fig_mood_line.update_layout(
-        **_plotly_theme(),
-        xaxis=dict(showgrid=False, tickangle=-30, tickfont=dict(size=11)),
-        yaxis=dict(
-            showgrid=True,
-            gridcolor="#F3EDF9",
-            zeroline=False,
-            range=[0.5, 5.5],
-            tickvals=[1, 2, 3, 4, 5],
-            ticktext=["rough", "low", "okay", "good", "great"],
-            title="mood",
-        ),
-        showlegend=False,
-        height=300,
-    )
-    st.plotly_chart(fig_mood_line, use_container_width=True)
+    if len(sorted_dates) < 2:
+        st.info(
+            "mood trends need at least 2 days of entries. "
+            "keep journaling — this chart will fill in soon. 🌱"
+        )
+    else:
+        fig_mood_line = go.Figure()
+        fig_mood_line.add_trace(go.Scatter(
+            x=date_labels,
+            y=mood_vals,
+            mode="lines+markers",
+            line=dict(color="#90BE6D", width=2.5),
+            marker=dict(size=7, color="#90BE6D"),
+            fill="tozeroy",
+            fillcolor="rgba(144,190,109,0.10)",
+            hovertemplate="%{x}<br>mood: %{y:.1f}<extra></extra>",
+        ))
+        fig_mood_line.update_layout(
+            **_plotly_theme(),
+            xaxis=dict(showgrid=False, tickangle=-30, tickfont=dict(size=11)),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor="#F3EDF9",
+                zeroline=False,
+                range=[0.5, 5.5],
+                tickvals=[1, 2, 3, 4, 5],
+                ticktext=["rough", "low", "okay", "good", "great"],
+                title="mood",
+            ),
+            showlegend=False,
+            height=300,
+        )
+        st.plotly_chart(fig_mood_line, use_container_width=True, key="chart_mood_line")
 
     st.markdown("<hr style='border:1px solid #E9D5FF; margin: 1.5rem 0;'>",
                 unsafe_allow_html=True)
@@ -340,16 +388,28 @@ def show():
     )
 
     all_text = " ".join(e["body"] for e in filtered)
-    tokens = re.findall(r"\b[a-zA-Z']+\b", all_text.lower())
-    tokens = [t.strip("'") for t in tokens if t.strip("'") not in STOP_WORDS and len(t) > 2]
+    tokens   = re.findall(r"\b[a-zA-Z']+\b", all_text.lower())
+    tokens   = [t.strip("'") for t in tokens
+                if t.strip("'") not in STOP_WORDS and len(t) > 2]
 
-    if not tokens:
-        st.info("not enough text yet to build a word cloud. keep writing! 🌿")
-        return
+    # Validation: not enough unique words to build a meaningful cloud
+    MIN_TOKENS = 10
+    if not tokens or len(tokens) < MIN_TOKENS:
+        st.warning(
+            f"not enough words yet to build a word cloud "
+            f"({len(tokens)} meaningful word{'s' if len(tokens) != 1 else ''} found, "
+            f"need at least {MIN_TOKENS}). keep writing! 🌿"
+        )
+        st.stop()
 
     if WORDCLOUD_AVAILABLE:
-        # ── rendered word cloud via matplotlib ───────────────────────────────
+        # Feedback Pattern 4: st.progress — word cloud generation can be slow
+        # with large corpora; progress bar shows the user work is happening.
+        progress_bar = st.progress(0, text="building your word cloud...")
+
         freq = Counter(tokens)
+        progress_bar.progress(30, text="counting words...")
+
         wc = WordCloud(
             width=800,
             height=380,
@@ -361,18 +421,26 @@ def show():
             font_path=None,
         ).generate_from_frequencies(freq)
 
+        progress_bar.progress(70, text="rendering cloud...")
+
         fig_wc, ax = plt.subplots(figsize=(10, 4.5))
         ax.imshow(wc, interpolation="bilinear")
         ax.axis("off")
         fig_wc.patch.set_facecolor("none")
+
+        progress_bar.progress(100, text="done!")
+        time.sleep(0.3)          # brief pause so "done!" is readable
+        progress_bar.empty()     # clean up bar once render is complete
+
         st.pyplot(fig_wc, use_container_width=True)
+
     else:
-        # ── fallback: top-30 word frequency bar chart ─────────────────────
+        # Fallback: horizontal bar chart of top 30 words
         st.caption(
             "install `wordcloud` + `matplotlib` for the visual word cloud. "
             "showing top words as a chart instead."
         )
-        freq = Counter(tokens).most_common(30)
+        freq  = Counter(tokens).most_common(30)
         words, word_counts = zip(*freq)
 
         fig_words = go.Figure(
@@ -391,11 +459,10 @@ def show():
             showlegend=False,
             height=max(400, len(words) * 22 + 60),
         )
-        st.plotly_chart(fig_words, use_container_width=True)
+        st.plotly_chart(fig_words, use_container_width=True, key="chart_words_bar")
 
 
 def _wc_color():
-    """Returns one of the CloudNote palette colors at random."""
     import random
     palette = ["#A78BFA", "#7C6BAA", "#C4B5FD", "#6D5BA8", "#D8B4FE", "#8B5CF6"]
     return random.choice(palette)
