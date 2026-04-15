@@ -81,13 +81,14 @@ def show():
         "Entry Title",
         placeholder="entry name",
         label_visibility="collapsed",
+        key="journal_title"  # key prevents stale title persisting across reruns
     )
-
     body = st.text_area(
         "write freely here...",
         placeholder="what's on your mind? ⋆˚꩜｡",
         height=280,
         label_visibility="collapsed",
+        key="journal_body"  # key allows body to be cleared via session state after save
     )
 
     word_count = len(body.split()) if body.strip() else 0
@@ -99,7 +100,7 @@ def show():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if st.button("💾 save entry", use_container_width=True):
+    if st.button("💾 save entry", use_container_width=True, key="save_entry_btn"):
         if not body.strip():
             st.warning("your entry is empty — write a little something first. 🌿")
         else:
