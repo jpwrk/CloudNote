@@ -88,6 +88,7 @@ with st.sidebar:
         "✏️ Journal": "Journal",
         "📖 History": "History",
         "📊 Insights": "Insights",
+        "☁️ Nimbus": "Assistant",
         "⚙️ Settings": "Settings"
     }
 
@@ -121,4 +122,7 @@ elif page == "Settings":
     show()
 elif page == "Insights":
     from views.insights import show
+    show()
+elif page == "Assistant":
+    from views.assistant import show
     show()
