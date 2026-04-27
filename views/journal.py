@@ -78,7 +78,7 @@ def show():
             unsafe_allow_html=True,
         )
 
-    if st.button("✨ new prompt", key="refresh_prompt"):
+    if st.button("new affirmation", key="refresh_prompt"):
         st.session_state.prompt_refresh += 1
         st.rerun()
 
